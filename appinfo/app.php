@@ -77,10 +77,10 @@ if (\OCP\App::isEnabled($c->getAppName()) && !\OC::$CLI && $enabled) {
                     $appService->init();
                 } catch (\OCA\UserCAS\Exception\PhpCas\PhpUserCasLibraryNotFoundException $e) {
 
-                    $loggingService->write(\OCP\Util::FATAL, 'Fatal error with code: ' . $e->getCode() . ' and message: ' . $e->getMessage());
+                    $loggingService->write(\OCP\Util::ERROR, 'Fatal error with code: ' . $e->getCode() . ' and message: ' . $e->getMessage());
 
-                    header("Location: " . $appService->getAbsoluteURL('/'));
-                    die();
+                    //header("Location: " . $appService->getAbsoluteURL('/'));
+                    //die();
                 }
             }
 

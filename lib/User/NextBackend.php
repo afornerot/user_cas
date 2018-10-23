@@ -23,13 +23,17 @@
 
 namespace OCA\UserCAS\User;
 
-use OC\User\Database;
 use OCA\UserCAS\Exception\PhpCas\PhpUserCasLibraryNotFoundException;
 use OCA\UserCAS\Service\AppService;
 use OCA\UserCAS\Service\LoggingService;
+
+use OC\User\Backend;
+use OCP\IConfig;
 use OCP\IUserBackend;
-use OCP\User\IProvidesDisplayNameBackend;
-use OCP\User\IProvidesHomeBackend;
+use OCP\User\Backend\ICheckPasswordBackend;
+use OCP\User\Backend\IGetDisplayNameBackend;
+use OCP\User\Backend\IGetHomeBackend;
+
 
 
 /**
@@ -42,7 +46,7 @@ use OCP\User\IProvidesHomeBackend;
  *
  * @since 1.4.0
  */
-class NextBackend extends Database implements \OCP\User\Backend\ICheckPasswordBackend, UserCasBackendInterface
+class NextBackend extends Backend implements IUserBackend, ICheckPasswordBackend, IGetDisplayNameBackend, IGetHomeBackend, UserCasBackendInterface
 {
 
     /**
@@ -56,14 +60,28 @@ class NextBackend extends Database implements \OCP\User\Backend\ICheckPasswordBa
     private $appService;
 
     /**
+     * @var IConfig
+     */
+    private $config;
+
+    /**
+     * @var string
+     */
+    private $appName;
+
+    /**
      * Backend constructor.
+     * @param $appName
+     * @param IConfig $config
      * @param LoggingService $loggingService
      * @param AppService $appService
      */
-    public function __construct(LoggingService $loggingService, AppService $appService)
+    public function __construct($appName, IConfig $config, LoggingService $loggingService, AppService $appService)
     {
 
-        parent::__construct();
+        //parent::__construct();
+        $this->appName = $appName;
+        $this->config = $config;
         $this->loggingService = $loggingService;
         $this->appService = $appService;
     }
@@ -95,49 +113,115 @@ class NextBackend extends Database implements \OCP\User\Backend\ICheckPasswordBa
                 $this->appService->init();
             } catch (PhpUserCasLibraryNotFoundException $e) {
 
-                $this->loggingService->write(\OCP\Util::FATAL, 'Fatal error with code: ' . $e->getCode() . ' and message: ' . $e->getMessage());
-
-                header("Location: " . $this->appService->getAbsoluteURL('/'));
-                die();
+                $this->loggingService->write(\OCP\Util::ERROR, 'Fatal error with code: ' . $e->getCode() . ' and message: ' . $e->getMessage());
             }
         }
 
-        if (\phpCAS::isInitialized()) {
+        if($this->appService->isCasInitialized()) {
+            if (\phpCAS::isInitialized()) {
 
-            if (!\phpCAS::isAuthenticated()) {
+                if ($loginName === FALSE) {
 
-                $this->loggingService->write(\OCP\Util::DEBUG, 'phpCAS user has not been authenticated.');
+                    $this->loggingService->write(\OCP\Util::ERROR, 'phpCAS returned no user.');
+                    #\OCP\Util::writeLog('cas', 'phpCAS returned no user.', \OCP\Util::ERROR);
+                }
 
-                return parent::checkPassword($loginName, $password);
+                if (\phpCAS::checkAuthentication()) {
 
-                #\OCP\Util::writeLog('cas', 'phpCAS user has not been authenticated.', \OCP\Util::ERROR);
+                    $casUid = \phpCAS::getUser();
+
+                    if ($casUid === $loginName) {
+
+                        $this->loggingService->write(\OCP\Util::DEBUG, 'phpCAS user password has been checked.');
+                        #\OCP\Util::writeLog('cas', 'phpCAS user password has been checked.', \OCP\Util::ERROR);
+
+                        return $loginName;
+                    }
+                }
+            } else {
+
+                $this->loggingService->write(\OCP\Util::ERROR, 'phpCAS has not been initialized.');
+                #\OCP\Util::writeLog('cas', 'phpCAS has not been initialized.', \OCP\Util::ERROR);
             }
+        }
 
-            if ($loginName === FALSE) {
+        return FALSE;
+    }
 
-                $this->loggingService->write(\OCP\Util::ERROR, 'phpCAS returned no user.');
-                #\OCP\Util::writeLog('cas', 'phpCAS returned no user.', \OCP\Util::ERROR);
+    /**
+     * @param string $uid
+     * @return string
+     */
+    public function getDisplayName($uid) {
+
+        if (!$this->appService->isCasInitialized()) {
+
+            try {
+
+                $this->appService->init();
+            } catch (PhpUserCasLibraryNotFoundException $e) {
+
+                $this->loggingService->write(\OCP\Util::ERROR, 'Fatal error with code: ' . $e->getCode() . ' and message: ' . $e->getMessage());
             }
+        }
+
+
+        if ($this->appService->isCasInitialized()) {
 
             if (\phpCAS::checkAuthentication()) {
 
-                $casUid = \phpCAS::getUser();
+                $casAttributes = \phpCAS::getAttributes();
 
-                if ($casUid === $loginName) {
+                # Test if an attribute parser added a new dimension to our attributes array
+                if (array_key_exists('attributes', $casAttributes)) {
 
-                    $this->loggingService->write(\OCP\Util::DEBUG, 'phpCAS user password has been checked.');
-                    #\OCP\Util::writeLog('cas', 'phpCAS user password has been checked.', \OCP\Util::ERROR);
+                    $newAttributes = $casAttributes['attributes'];
 
-                    return $loginName;
+                    unset($casAttributes['attributes']);
+
+                    $casAttributes = array_merge($casAttributes, $newAttributes);
                 }
+
+                // DisplayName
+                $displayNameMapping = $this->config->getAppValue($this->appName, 'cas_displayName_mapping');
+
+                $displayNameMappingArray = explode("+", $displayNameMapping);
+
+                $casDisplayName = '';
+
+                foreach ($displayNameMappingArray as $displayNameMapping) {
+
+                    if (array_key_exists($displayNameMapping, $casAttributes)) {
+
+                        $casDisplayName .= $casAttributes[$displayNameMapping] . " ";
+                    }
+                }
+
+                $casDisplayName = trim($casDisplayName);
+
+                if ($casDisplayName === '' && array_key_exists('displayName', $casAttributes)) {
+
+                    $casDisplayName = $casAttributes['displayName'];
+                }
+
+                return $casDisplayName;
             }
-
-            return FALSE;
-        } else {
-
-            $this->loggingService->write(\OCP\Util::ERROR, 'phpCAS has not been initialized.');
-            #\OCP\Util::writeLog('cas', 'phpCAS has not been initialized.', \OCP\Util::ERROR);
-            return FALSE;
         }
+
+        return $uid;
+    }
+
+    /**
+     * get the user's home directory
+     *
+     * @param string $uid the username
+     * @return string|false
+     */
+    public function getHome(string $uid) {
+        if ($this->userExists($uid)) {
+            return \OC::$server->getConfig()->getSystemValue('datadirectory', \OC::$SERVERROOT . '/data') . '/' . $uid;
+        }
+
+        return false;
     }
 }
