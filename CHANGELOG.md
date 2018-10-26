@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+Version 1.5.6
+-------------
+* Change most of the INFO log writes to DEBUG
+
+
 Version 1.5.5
 -------------
 * Add Support for ownCloud 10.0.10 and Nextcloud 14.0.0
